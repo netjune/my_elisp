@@ -7,6 +7,7 @@
 ;; Modified by Andrew Gwozdziewycz <git@apgwoz.com>
 ;; Modified by Aidan Gauland <aidalgol@no8wireless.co.nz> October 2011
 ;; Modified by Olivier Sirven <the.slaa@gmail.com> November 2013
+;; Modified by zhanghj <ccsmile2008@outlook.com> April 2019
 ;; Keywords: extensions, convenience, lisp
 
 ;; This file is free software; you can redistribute it and/or modify
@@ -34,80 +35,78 @@
 ;; 'notify-via-libnotify or 'notify-via-message
 ;;; Code:
 
-(defvar notify-defaults (list :app "Emacs" :icon "emacs" :timeout 5000
-			      :urgency "low"
-			      :category "emacs.message")
-  "Notification settings' defaults.
-May be overridden with key-value additional arguments to `notify'.")
+;; TODO: use diffrent alist for diffrent backends
+(defvar notify-default-alist '((:app . "Emacs")
+							   (:icon . "emblem-default")
+							   (:timeout . 5000)
+							   (:urgency . "low")
+							   (:category . "emacs.message")
+							   (:sound . "default"))
+  "Notification settings' defaults.")
+
+;;+Added by zhanghj(ccsmile2008@outlook.com) at 11:24 04/26/2019
+(defvar notify-critical-alist '((:app . "Emacs")
+								(:icon . "emblem-important")
+								(:timeout . 9999999)
+								(:urgency . "critical")
+								(:category . "emacs.message")
+								(:sound . "Glass"))
+  "Notification settings' defaults for critical events.")
+
 (defvar notify-delay '(0 5 0)
   "Minimum time allowed between notifications in time format.")
+
 (defvar notify-last-notification '(0 0 0) "Time of last notification.")
+
 (defvar notify-method nil "Notification method among
 'notify-via-dbus, 'notify-via-libnotify, 'notify-via-message or
 'notify-via-growl")
 
 ;; determine notification method unless already set
 ;; prefer growl > D-Bus > libnotify > message
-(cond
- ((null notify-method)
+(unless notify-method
   (setq notify-method
-	(cond
-        ((executable-find "growlnotify") 'notify-via-growl)
-	 ((and (require 'dbus nil t)
-	       (dbus-ping :session "org.freedesktop.Notifications"))
-	  (defvar notify-id 0 "Current D-Bus notification id.")
-	  'notify-via-dbus)
-	 ((executable-find "notify-send") 'notify-via-libnotify)
-	 (t 'notify-via-message))))
- ((eq notify-method 'notify-via-dbus) ;housekeeping for pre-chosen DBus
-  (if (and (require 'dbus nil t)
-	   (dbus-ping :session "org.freedesktop.Notifications"))
-      (defvar notify-id 0 "Current D-Bus notification id.")
-    (setq notify-method (if (executable-find "notify-send")
-			    'notify-via-libnotify
-			  'notify-via-message))))
- ((and (eq notify-method 'notify-via-libnotify)
-       (not (executable-find "notify-send"))) ;housekeeping for pre-chosen libnotify
-  (setq notify-method
-	(if (and (require 'dbus nil t)
-		 (dbus-ping :session "org.freedesktop.Notifications"))
-	    (progn
-	      (defvar notify-id 0 "Current D-Bus notification id.")
-	      'notify-via-dbus)
-	  'notify-via-message)))
- ((and (eq notify-method 'notify-via-growl)
-       (not (executable-find "growlnotify")))
-  (setq notify-method 'notify-via-message)))
+		(cond
+		 ((executable-find "growlnotify") 'notify-via-growl)
+		 ((executable-find "osascript") 'notify-via-osacript)
+		 ((and (require 'dbus nil t)
+			   (boundp 'dbus-runtime-version)
+			   (dbus-ping :session "org.freedesktop.Notifications"))
+		  (defvar notify-id 0 "Current D-Bus notification id.")
+		  'notify-via-dbus)
+		 ((executable-find "notify-send") 'notify-via-libnotify)
+		 (t 'notify-via-message))))
 
-(defun notify-via-dbus (title body)
+
+(defun notify-via-dbus (title body notify-alist)
   "Send notification with TITLE, BODY `D-Bus'."
   (dbus-call-method :session "org.freedesktop.Notifications"
-		    "/org/freedesktop/Notifications"
-		    "org.freedesktop.Notifications" "Notify"
-		    (get 'notify-defaults :app)
-		    (setq notify-id (+ notify-id 1))
-		    (get 'notify-defaults :icon) title body '(:array)
-		    '(:array :signature "{sv}") ':int32
-		    (get 'notify-defaults :timeout)))
+					"/org/freedesktop/Notifications"
+					"org.freedesktop.Notifications" "Notify"
+					(alist-get :app notify-alist)
+					(setq notify-id (+ notify-id 1))
+					(alist-get :icon notify-alist) title body '(:array)
+					'(:array :signature "{sv}") ':int32
+					(alist-get :timeout notify-alist)))
 
-(defun notify-via-libnotify (title body)
+(defun notify-via-libnotify (title body notify-alist)
   "Notify with TITLE, BODY via `libnotify'."
   (call-process "notify-send" nil 0 nil
-		title body "-t"
-		(number-to-string (get 'notify-defaults :timeout))
-		"-i" (get 'notify-defaults :icon)
-		"-u" (get 'notify-defaults :urgency)
-		"-c" (get 'notify-defaults :category)))
+				title body "-t"
+				(number-to-string (alist-get :timeout notify-alist))
+				"-i" (alist-get :icon notify-alist)
+				"-u" (alist-get :urgency notify-alist)
+				"-c" (alist-get :category notify-alist)))
 
-(defun notify-via-message (title body)
+(defun notify-via-message (title body notify-alist)
   "Notify TITLE, BODY with a simple message."
   (message "%s: %s" title body))
 
-(defun notify-via-growl (title body)
+(defun notify-via-growl (title body notify-alist)
   "Notify TITLE, BODY with a growl"
   (call-process "growlnotify" nil 0 nil
-                "-a" (get 'notify-defaults :app)
-                "-n" (get 'notify-defaults :category)
+                "-a" (alist-get :app notify-alist)
+                "-n" (alist-get :category notify-alist)
                 "-t" (notify-via-growl-stringify title)
                 "-m" (notify-via-growl-stringify body)))
 
@@ -116,26 +115,50 @@ May be overridden with key-value additional arguments to `notify'.")
         ((stringp thing) thing)
         (t (format "%s" thing))))
 
-(defun keywords-to-properties (symbol args &optional defaults)
-  "Add to SYMBOL's property list key-values from ARGS and DEFAULTS."
-  (when (consp defaults)
-    (keywords-to-properties symbol defaults))
+;;+Added by zhanghj(ccsmile2008@outlook.com) at 14:43 04/26/2019
+(defun notify-via-osacript (title body notify-alist)
+  (let ((arg-str (format "display notification \"%s\" with title \"%s\" sound name \"%s\""
+						 body title
+						 (alist-get :sound notify-alist))))
+	(call-process "osascript" nil 0 nil "-e" arg-str)))
+
+
+(defun notify-merge-keywords (alist args)
+  "Merge property list key-values from ARGS into ALIST."
   (while args
-    (put symbol (car args) (cadr args))
-    (setq args (cddr args))))
+	(if (assq (car args) alist)
+		(setf (alist-get (car args) alist) (cadr args))
+	  (setq alist (cons (cons (car args) (cadr args)) alist)))
+    (setq args (cddr args)))
+  alist)
 
 
 ;;;###autoload
-(defun notify (title body &rest args)
+(defun my-notify (title body &rest args)
   "Notify TITLE, BODY via `notify-method'.
 ARGS may be amongst :timeout, :icon, :urgency, :app and :category."
   (when (time-less-p notify-delay
-		     (time-since notify-last-notification))
-    (or (eq notify-method 'notify-via-message)
-	(keywords-to-properties 'notify-defaults args
-				notify-defaults))
-    (setq notify-last-notification (current-time))
-    (funcall notify-method title body)))
+					 (time-since notify-last-notification))
+	(setq notify-last-notification (current-time))
+	(let ((notify-alist (notify-merge-keywords
+						 (copy-alist notify-default-alist) args)))
+	  (funcall notify-method title body notify-alist))))
+
+
+;;+Added by zhanghj(ccsmile2008@outlook.com) at 11:24 04/26/2019
+;;;###autoload
+(defun my-notify-critical (title body &rest args)
+  "Notify TITLE, BODY via `notify-method'.
+ARGS may be amongst :timeout, :icon, :urgency, :app and :category."
+  (when (time-less-p notify-delay
+					 (time-since notify-last-notification))
+	(setq notify-last-notification (current-time))
+	(let ((notify-alist (notify-merge-keywords
+						 (copy-alist notify-critical-alist) args)))
+	  (funcall notify-method title body notify-alist))))
+
+
+
 
 (provide 'notify)
 
